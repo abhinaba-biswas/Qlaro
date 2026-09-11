@@ -1,0 +1,17 @@
+[package]
+name = "core"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical Apache Arrow data contracts, types, schemas, and error taxonomy"
+
+[dependencies]
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-array = { workspace = true }
+arrow-ipc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
