@@ -1,0 +1,17 @@
+[package]
+name = "catalog"
+version = "0.1.0"
+edition = "2021"
+description = "Dataset storage formats, identity fingerprints, and metadata catalog "
+
+[dependencies]
+core = { path = "../core" }
+arrow = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-array = { workspace = true }
+parquet = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
