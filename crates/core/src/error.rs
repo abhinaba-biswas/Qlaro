@@ -8,6 +8,8 @@ pub enum QlaroErrorCode {
     CorruptedBatch(String),
     DatasetNotFound(String),
     UnentitledCapability(String),
+    Cancelled(String),
+    ResourceLimitExceeded(String),
     Internal(String),
 }
 
@@ -20,6 +22,8 @@ impl std::fmt::Display for QlaroErrorCode {
             Self::CorruptedBatch(s) => write!(f, "Corrupted record batch: {}", s),
             Self::DatasetNotFound(s) => write!(f, "Dataset not found: {}", s),
             Self::UnentitledCapability(s) => write!(f, "Unentitled capability: {}", s),
+            Self::Cancelled(s) => write!(f, "Operation cancelled: {}", s),
+            Self::ResourceLimitExceeded(s) => write!(f, "Resource limit exceeded: {}", s),
             Self::Internal(s) => write!(f, "Internal engine error: {}", s),
         }
     }

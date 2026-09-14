@@ -57,3 +57,67 @@ pub enum CanonicalScalar {
     Date32(i32),
     TimestampMicros(i64, Option<String>),
 }
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestionSource {
+    pub name: String,
+    pub source_path: PathBuf,
+    pub format_hint: Option<StorageFormat>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestionOptions {
+    pub strict_schema: bool,
+    pub max_bytes: Option<u64>,
+    pub sample_limit: Option<usize>,
+}
+
+impl Default for IngestionOptions {
+    fn default() -> Self {
+        Self {
+            strict_schema: true,
+            max_bytes: None,
+            sample_limit: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestionLineage {
+    pub source_path: String,
+    pub source_fingerprint: DatasetFingerprint,
+    pub ingested_at: DateTime<Utc>,
+    pub pipeline_version: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+

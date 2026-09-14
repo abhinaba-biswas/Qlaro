@@ -1,10 +1,12 @@
+use arrow_array::RecordBatch;
+use arrow_ipc::reader::{FileReader as IpcFileReader, StreamReader as IpcStreamReader};
+use arrow_schema::Schema;
 use core::arrow_contract::validate_canonical_schema;
 use core::error::{QlaroError, QlaroErrorCode};
-use core::types::StorageFormat;
-use arrow_array::RecordBatch;
-use arrow_schema::Schema;
+use core::types::{CancellationToken, StorageFormat};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
+use std::io::{BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,7 +45,16 @@ pub fn detect_storage_format<P: AsRef<Path>>(path: P) -> Result<StorageFormat, Q
 pub fn inspect_parquet_file<P: AsRef<Path>>(
     path: P,
     sample_limit: Option<usize>,
+    cancel_token: Option<&CancellationToken>,
 ) -> Result<(Arc<Schema>, Vec<RecordBatch>, u64), QlaroError> {
+    if let Some(token) = cancel_token {
+        if token.is_cancelled() {
+            return Err(QlaroError::Core(QlaroErrorCode::Cancelled(
+                "Inspection cancelled before reading Parquet file".to_string(),
+            )));
+        }
+    }
+
     let file = File::open(path.as_ref()).map_err(|e| QlaroError::Io(e.to_string()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
@@ -60,7 +71,15 @@ pub fn inspect_parquet_file<P: AsRef<Path>>(
     let mut total_rows = 0u64;
 
     while let Some(batch_res) = reader.next() {
-        let batch = batch_res.map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
+        if let Some(token) = cancel_token {
+            if token.is_cancelled() {
+                return Err(QlaroError::Core(QlaroErrorCode::Cancelled(
+                    "Parquet inspection cancelled during batch processing".to_string(),
+                )));
+            }
+        }
+        let batch = batch_res
+            .map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
         total_rows += batch.num_rows() as u64;
         batches.push(batch);
         if let Some(limit) = sample_limit {
@@ -71,4 +90,114 @@ pub fn inspect_parquet_file<P: AsRef<Path>>(
     }
 
     Ok((schema, batches, total_rows))
+}
+
+/// schema and sample reading from an Arrow IPC file or stream
+pub fn inspect_arrow_ipc_file<P: AsRef<Path>>(
+    path: P,
+    sample_limit: Option<usize>,
+    cancel_token: Option<&CancellationToken>,
+) -> Result<(Arc<Schema>, Vec<RecordBatch>, u64), QlaroError> {
+    if let Some(token) = cancel_token {
+        if token.is_cancelled() {
+            return Err(QlaroError::Core(QlaroErrorCode::Cancelled(
+                "Inspection cancelled before reading Arrow IPC file".to_string(),
+            )));
+        }
+    }
+
+    let file = File::open(path.as_ref()).map_err(|e| QlaroError::Io(e.to_string()))?;
+    let mut reader = BufReader::new(file);
+
+    let (schema, batches, total_rows) = match IpcFileReader::try_new(&mut reader, None) {
+        Ok(ipc_reader) => {
+            let schema = ipc_reader.schema();
+            validate_canonical_schema(&schema)?;
+
+            let mut batches = Vec::new();
+            let mut total_rows = 0u64;
+            for batch_res in ipc_reader {
+                if let Some(token) = cancel_token {
+                    if token.is_cancelled() {
+                        return Err(QlaroError::Core(QlaroErrorCode::Cancelled(
+                            "Arrow IPC inspection cancelled during batch processing".to_string(),
+                        )));
+                    }
+                }
+                let batch = batch_res
+                    .map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
+                total_rows += batch.num_rows() as u64;
+                batches.push(batch);
+                if let Some(limit) = sample_limit {
+                    if total_rows >= limit as u64 {
+                        break;
+                    }
+                }
+            }
+            (schema, batches, total_rows)
+        }
+        Err(_) => {
+            reader
+                .seek(SeekFrom::Start(0))
+                .map_err(|e| QlaroError::Io(e.to_string()))?;
+
+            let ipc_stream = IpcStreamReader::try_new(&mut reader, None)
+                .map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
+            let schema = ipc_stream.schema();
+            validate_canonical_schema(&schema)?;
+
+            let mut batches = Vec::new();
+            let mut total_rows = 0u64;
+            for batch_res in ipc_stream {
+                if let Some(token) = cancel_token {
+                    if token.is_cancelled() {
+                        return Err(QlaroError::Core(QlaroErrorCode::Cancelled(
+                            "Arrow IPC stream inspection cancelled during batch processing"
+                                .to_string(),
+                        )));
+                    }
+                }
+                let batch = batch_res
+                    .map_err(|e| QlaroError::Core(QlaroErrorCode::CorruptedBatch(e.to_string())))?;
+                total_rows += batch.num_rows() as u64;
+                batches.push(batch);
+                if let Some(limit) = sample_limit {
+                    if total_rows >= limit as u64 {
+                        break;
+                    }
+                }
+            }
+            (schema, batches, total_rows)
+        }
+    };
+
+    Ok((schema, batches, total_rows))
+}
+
+/// Unified file inspector for supported formats
+pub fn inspect_dataset_file<P: AsRef<Path>>(
+    path: P,
+    format_hint: Option<StorageFormat>,
+    sample_limit: Option<usize>,
+    cancel_token: Option<&CancellationToken>,
+) -> Result<(StorageFormat, Arc<Schema>, Vec<RecordBatch>, u64), QlaroError> {
+    let p = path.as_ref();
+    let format = match format_hint {
+        Some(fmt) => fmt,
+        None => detect_storage_format(p)?,
+    };
+
+    match format {
+        StorageFormat::Parquet => {
+            let (schema, batches, rows) = inspect_parquet_file(p, sample_limit, cancel_token)?;
+            Ok((format, schema, batches, rows))
+        }
+        StorageFormat::ArrowIpc => {
+            let (schema, batches, rows) = inspect_arrow_ipc_file(p, sample_limit, cancel_token)?;
+            Ok((format, schema, batches, rows))
+        }
+        StorageFormat::Csv => Err(QlaroError::Core(QlaroErrorCode::InvalidFormat(
+            "CSV format requires schema inference engine ".to_string(),
+        ))),
+    }
 }

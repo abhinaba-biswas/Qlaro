@@ -1,7 +1,7 @@
 use crate::format_reader::detect_storage_format;
 use crate::identity::compute_file_fingerprint;
 use core::error::QlaroError;
-use core::types::{DatasetFingerprint, DatasetId, DatasetMetadata, StorageFormat};
+use core::types::{DatasetFingerprint, DatasetId, DatasetMetadata};
 use chrono::Utc;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +39,7 @@ impl DatasetRegistration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::types::StorageFormat;
     use arrow_array::{ArrayRef, Int32Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
