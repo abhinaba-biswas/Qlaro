@@ -3,9 +3,11 @@ pub mod format_reader;
 pub mod identity;
 pub mod ingestion;
 pub mod metadata_model;
+pub mod schema_inference;
 
 pub use dataset::*;
 pub use format_reader::*;
 pub use identity::*;
 pub use ingestion::*;
 pub use metadata_model::*;
+pub use schema_inference::*;
